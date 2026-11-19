@@ -371,11 +371,8 @@ function decodeSong() {
     const bin = atob(b64), n = bin.length, bytes = new Uint8Array(n);
     for (let i = 0; i < n; i++) bytes[i] = bin.charCodeAt(i);
     el.textContent = '';
-    const O = window.OfflineAudioContext || window.webkitOfflineAudioContext;
-    new O(2, 44100, 44100).decodeAudioData(bytes.buffer).then(buf => {
-      SONG = buf;
-      if (songWanted) startSong();
-    }, () => {});
+    SONG = new Audio(URL.createObjectURL(new Blob([bytes], { type: 'audio/mpeg' })));
+    SONG.loop = true; SONG.preload = 'auto'; SONG.setAttribute('playsinline', '');
   } catch (e) { SONG = null; }
 }
 function audioInit() {
@@ -410,29 +407,14 @@ function audioInit() {
 const live = () => AC && AC.state === 'running';
 function startSong() {
   songWanted = true;
-  if (!SONG || !live()) return;
-  stopSong();
-  const now = AC.currentTime, off = state === 'play' ? Math.max(0, clk - film0) % SONG.duration : 0;
-  songSrc = AC.createBufferSource(); songSrc.buffer = SONG; songSrc.loop = true;
-  songSrc.connect(MUSIC_GAIN);
-  MUSIC_GAIN.gain.cancelScheduledValues(now);
-  MUSIC_GAIN.gain.setValueAtTime(0, now);
-  MUSIC_GAIN.gain.linearRampToValueAtTime(MUTED ? 0 : MUSIC_VOL, now + 0.6);
-  songSrc.start(now, off);
+  if (!SONG) return;
+  try { SONG.currentTime = 0; } catch (e) { }
+  SONG.muted = MUTED; SONG.volume = 0.9;
+  const p = SONG.play(); if (p && p.catch) p.catch(() => { });
+  songSrc = SONG;
 }
-function stopSong() {
-  if (!songSrc) return;
-  try { songSrc.stop(); } catch (e) { }
-  songSrc.disconnect(); songSrc = null;
-}
-function toggleMute() {
-  MUTED = !MUTED;
-  if (!AC || !MUSIC_GAIN) return;
-  const now = AC.currentTime;
-  MUSIC_GAIN.gain.cancelScheduledValues(now);
-  MUSIC_GAIN.gain.setValueAtTime(MUSIC_GAIN.gain.value, now);
-  MUSIC_GAIN.gain.linearRampToValueAtTime(MUTED ? 0 : MUSIC_VOL, now + 0.3);
-}
+function stopSong() { if (SONG) SONG.pause(); songSrc = null; }
+function toggleMute() { MUTED = !MUTED; if (SONG) SONG.muted = MUTED; }
 function updateBeat(dt) {
   let lvl = 0;
   if (ANALYSER && songSrc && live() && !MUTED) {
@@ -1533,6 +1515,7 @@ const freePlay = () => state === 'play' && clk - film0 > FILM_LEN;
 function togglePause() {
   paused = !paused;
   if (AC) { if (paused) AC.suspend(); else AC.resume(); }
+  if (SONG) { if (paused) SONG.pause(); else if (songWanted) SONG.play().catch(() => { }); }
 }
 
 /* ---------- input ---------- */
@@ -1585,6 +1568,7 @@ function hoverCursor(x, y) {
 }
 cv.addEventListener('pointerup', e => { if (state === 'start' && e.isPrimary) startFilm(); });
 document.addEventListener('visibilitychange', () => {
+  if (SONG && songWanted) { if (document.hidden) SONG.pause(); else if (!paused) SONG.play().catch(() => { }); }
   if (!AC) return;
   if (document.hidden) AC.suspend(); else if (!paused) AC.resume();
 });
