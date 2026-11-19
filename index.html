@@ -89,7 +89,40 @@ const b2 = document.createElement('canvas'), b2c = b2.getContext('2d');
 const FILTER_OK = (() => { const t = document.createElement('canvas').getContext('2d'); t.filter = 'blur(2px)'; return t.filter === 'blur(2px)'; })();
 
 let W, H, DPR, PW, CW, CH, AR, COLS, ROWS, X0, Y0, CX, LPAD, BG, FONT;
-let FLOOR, BASE, TIP, TH, STAR, TILT, KD;
+let FLOOR, BASE, TIP, TIP0, TH, STAR, TILT, KD;
+let GP = 1, HS = 1, RS = 1, NGIFT = 5, SHOWDEER = true, PREV = null, NOTE = '', NOTE_T = 0;
+const GROW_DAYS = 40;
+function realGrowth() {
+  const now = new Date(), y = now.getFullYear();
+  if (now.getMonth() === 11 && now.getDate() >= 25) return 1;
+  let tg = new Date(y, 11, 25);
+  if (now >= tg) tg = new Date(y + 1, 11, 25);
+  return clamp(1 - (tg - now) / 86400000 / GROW_DAYS, 0.08, 1);
+}
+function applyGrowth() {
+  HS = 0.34 + 0.66 * GP; RS = 0.5 + 0.5 * GP;
+  TH = (BASE - TIP0) * HS; TIP = BASE - TH; STAR = TIP - 2;
+  NGIFT = 1 + Math.floor(GP * 4.99); SHOWDEER = GP >= 0.6;
+}
+function refreshGrowth() {
+  const g = PREV !== null ? PREV : realGrowth();
+  if (Math.abs(g - GP) > 0.0005) { GP = g; applyGrowth(); }
+}
+const PREVS = [0.08, 0.3, 0.55, 0.8, 1, null];
+let prevIdx = 5;
+function cycleGrowth() {
+  prevIdx = (prevIdx + 1) % PREVS.length;
+  PREV = PREVS[prevIdx];
+  refreshGrowth();
+  NOTE = PREV === null ? 'TODAY' : 'PREVIEW  -  DAY ' + Math.round(GP * GROW_DAYS) + ' OF ' + GROW_DAYS;
+  NOTE_T = clk + 2.5;
+  if (AC) sfxStar();
+  spawn(CX, BASE - TH * 0.5, 70, 44, 18, 1.0, 66);
+}
+function labelHit(x, y) {
+  const lx = Math.round(CX - DPOS.width / 2) + GCEN[0], ly = Math.max(4, Math.round(ROWS * 0.04)) + 7;
+  return Math.abs(x - lx) <= 4 && Math.abs(y - ly) <= 1.5;
+}
 let CHR, CR, CG, CB, CA, DEP, TZ, TIDX, MASK;
 
 function layout() {
@@ -112,7 +145,7 @@ function layout() {
   CHR = new Uint8Array(N); CR = new Uint8ClampedArray(N); CG = new Uint8ClampedArray(N);
   CB = new Uint8ClampedArray(N); CA = new Uint8ClampedArray(N); DEP = new Float32Array(N);
   TZ = new Float32Array(N); TIDX = new Int32Array(N); MASK = new Float32Array(N);
-  FLOOR = 0.845 * ROWS; BASE = 0.698 * ROWS; TIP = 0.273 * ROWS; TH = BASE - TIP; STAR = TIP - 2;
+  FLOOR = 0.845 * ROWS; BASE = 0.698 * ROWS; TIP0 = 0.273 * ROWS; applyGrowth();
   TILT = 0.17 * AR; KD = AR * 0.28;
 }
 
@@ -232,7 +265,7 @@ for (let i = 0; i <= 256; i++) {
   TIERS.forEach(T => { if (f >= T.fb && f <= T.ft) w = Math.max(w, rT(T, (f - T.fb) / (T.ft - T.fb))); });
   WL[i] = w;
 }
-const widthAt = f => WL[(clamp(f) * 256) | 0];
+const widthAt = f => WL[(clamp(f) * 256) | 0] * RS;
 
 /* growth timing */
 const growF = t => (t < 1.8 ? 0 : easeIO((t - 1.8) / 4.35) * 1.12);
@@ -804,6 +837,7 @@ function drawTimer(clk) {
     halo(CX, y0 + 2, W0 * 0.6, 0.12, 44, 40, 85);
   }
   if (XMAS && state === 'play' && clk - lastAutoFw > 1.4) { lastAutoFw = clk; launch(CX + (Math.random() - 0.5) * 90, ROWS * (0.12 + Math.random() * 0.2), false); }
+  if (clk < NOTE_T) { const s = NOTE; hsl(44, 60, 86); putText(s, CX - s.length / 2, y0 + 8, Z, clamp((NOTE_T - clk) / 0.5)); }
 }
 
 /* ---------- fireworks and sparks ---------- */
@@ -864,7 +898,7 @@ function ornaments(rot) {
     const tau = clk - o.born;
     if (tau < 0) continue;
     const de = easeOutBack(tau / 0.5), ph = o.a + rot, s = Math.sin(ph), c = Math.cos(ph);
-    const x = CX + o.r * s, z = o.r * c, y = BASE - o.f * TH + o.d + z * TILT - (1 - de) * 6;
+    const x = CX + o.r * RS * s, z = o.r * RS * c, y = BASE - o.f * TH + o.d * RS + z * TILT - (1 - de) * 6;
     const lt = 0.5 + 0.5 * (-0.95 * s + 0.3 * c), lam = 0.25 + 0.75 * sstep(0.2, 1.0, lt);
     hsl(o.hue, o.sat, (o.sat ? 26 : 45) + 26 * lam);
     put(x - 1, y, C_LP, z + 1.2, 1); put(x + 1, y, C_RP, z + 1.2, 1);
@@ -1100,7 +1134,7 @@ function deerSD(px, py) {
 }
 const DEER_GL = [C_PLUS, C_STAR, C_x, C_COLON];
 function deer(t) {
-  if (t < 10.55) return;
+  if (t < 10.55 || !SHOWDEER) return;
   const e = clamp((t - 10.55) / 1.4), sc = easeOutBack(e);
   if (sc < 0.02) return;
   const m = clamp(e * 1.3), lt = clk - DEER_LEAP;
@@ -1139,8 +1173,8 @@ function tree(t, rot, F) {
     let ext = 1;
     if (!full) { const e = (F - f) / 0.07; if (e < 1) ext = e * e * (3 - 2 * e); }
     const id = ((PA[i] + rot) * SK) & SM;
-    const r = PR[i] * ext, z = r * COS[id];
-    const y = BASE - f * TH + PD[i] * ext + z * TILT;
+    const r = PR[i] * ext * RS, z = r * COS[id];
+    const y = BASE - f * TH + PD[i] * ext * RS + z * TILT;
     if (y < 0 || y >= ROWS) continue;
     const k = (y | 0) * COLS + ((CX + r * SIN[id]) | 0);
     if (z > TZ[k]) { TZ[k] = z; TIDX[k] = i; }
@@ -1187,10 +1221,10 @@ function tree(t, rot, F) {
 function baubles(t, rot) {
   for (let n = 0; n < BAUB.length; n++) {
     const B = BAUB[n], tB = tpOf(B.f) + 0.1;
-    if (t < tB) continue;
+    if (t < tB || (n * 0.6180339) % 1 > 0.25 + 0.75 * GP) continue;
     const de = easeOutBack((t - tB) / 0.5), al = clamp((t - tB) / 0.15);
     const ph = B.a + rot, s = Math.sin(ph), c = Math.cos(ph);
-    const x = CX + B.r * s, z = B.r * c, y = BASE - B.f * TH + B.d + z * TILT - (1 - de) * 4;
+    const x = CX + B.r * RS * s, z = B.r * RS * c, y = BASE - B.f * TH + B.d * RS + z * TILT - (1 - de) * 4;
     const lt = 0.5 + 0.5 * (-0.95 * s + 0.3 * c), lam = 0.1 + 0.9 * sstep(0.25, 1.0, lt);
     const ix = Math.floor(x), iy = Math.floor(y);
     const mk = ix >= 0 && iy >= 0 && ix < COLS && iy < ROWS ? MASK[iy * COLS + ix] : 1;
@@ -1208,10 +1242,10 @@ function lights(t, rot) {
   if (t < 5.95) return;
   let halos = 0;
   for (let i = 0; i < NL; i++) {
-    if (t < LON[i]) continue;
+    if (t < LON[i] || (i * 0.6180339) % 1 > 0.15 + 0.85 * GP) continue;
     const id = ((LA[i] + rot) * SK) & SM;
-    const x = CX + LR[i] * SIN[id], z = LR[i] * COS[id];
-    const y = BASE - LF[i] * TH + LD[i] + z * TILT;
+    const x = CX + LR[i] * RS * SIN[id], z = LR[i] * RS * COS[id];
+    const y = BASE - LF[i] * TH + LD[i] * RS + z * TILT;
     const ix = x | 0, iy = y | 0;
     if (iy < 0 || iy >= ROWS) continue;
     if (MASK[iy * COLS + ix] < 0.9) continue;
@@ -1311,7 +1345,7 @@ function star(t) {
     halo(cx, cy, 4 + (t - 5.27) * 6, 0.6, 44, 60, 82);
     return;
   }
-  const o = easeOutBack((t - 5.65) / 0.52), breath = 1 + 0.07 * Math.sin(t * 1.7) + 0.08 * BEAT;
+  const o = easeOutBack((t - 5.65) / 0.52) * (0.55 + 0.45 * GP), breath = 1 + 0.07 * Math.sin(t * 1.7) + 0.08 * BEAT;
   const gp = (((t - 6.4) % 3.6) + 3.6) % 3.6;
   const glint = Math.max(t > 6.4 && gp < 0.4 ? Math.sin(Math.PI * gp / 0.4) : 0, clk > STAR_HIT ? Math.exp(-(clk - STAR_HIT) * 2.5) * 1.6 : 0);
   const core = ['  ###  ', '##@@@##', '  ###  '];
@@ -1386,11 +1420,12 @@ const GFR = new Uint8Array(12), GFG = new Uint8Array(12), GFB = new Uint8Array(1
 function gifts(t, rot) {
   if (t < 9.0) return;
   for (let g = 0; g < 5; g++) {
-    const G = GIFTS[g], sc = easeOutBack((t - (9.0 + 0.26 * g)) / 0.42);
+    if (g >= NGIFT) { GBOX[g] = null; continue; }
+    const G = GIFTS[g], sc = easeOutBack((t - (9.0 + 0.26 * g)) / 0.42) * (0.6 + 0.4 * GP);
     if (sc <= 0.01) { GBOX[g] = null; continue; }
     const ht = clk - GHOP[g], hop = ht > 0 && ht < 1.4 ? Math.abs(Math.sin(ht * Math.PI / 0.42)) * 4 * Math.exp(-ht * 2.4) : 0;
     const th = rot + G.yaw, ca = Math.cos(th), sa = Math.sin(th);
-    const pc = G.a + rot, d = G.d * MAXR, gx0 = d * Math.sin(pc), gz0 = d * Math.cos(pc);
+    const pc = G.a + rot, d = G.d * MAXR * (0.45 + 0.55 * RS), gx0 = d * Math.sin(pc), gz0 = d * Math.cos(pc);
     const ext = Math.max(G.hx, G.hz) * 1.42 * sc, gy0 = FLOOR + gz0 * KD;
     GBOX[g] = [CX + gx0 - ext, gy0 - (G.hy + 2) * sc * AR - hop - 1, CX + gx0 + ext, gy0 + ext * KD + 1, CX + gx0, gy0 - G.hy * sc * AR - hop, G.rib[0]];
     const NU = [1, -1, 0, 0], NW = [0, 0, 1, -1];
@@ -1518,6 +1553,7 @@ function frame(now) {
     else if (FT < 0.0125 && STRIDE > 1 && !(frameNo % 240)) { STRIDE--; FT = 0.02; }
   }
   frameNo++;
+  if (!(frameNo % 120)) refreshGrowth();
   CHR.fill(0); DEP.fill(-1e9); TZ.fill(-1e9); TIDX.fill(-1); MASK.fill(1);
   hq = 0;
   backdrop(clk);
@@ -1568,6 +1604,7 @@ function treeIndexAt(x, y) {
 }
 function onCellClick(x, y) {
   if (inTimer(x, y)) {
+    if (labelHit(x, y)) { cycleGrowth(); return; }
     timerCascade();
     spawn(CX, TBOX[1] + 4, 60, -1, 20, 1.1);
     return;
@@ -1658,7 +1695,9 @@ addEventListener('keydown', e => {
 });
 const TOUCH = matchMedia('(pointer:coarse)').matches;
 let STRIDE = 1, FT = 0.016, frameNo = 0;
+addEventListener('keydown', e => { if (e.key === 'g' || e.key === 'G') cycleGrowth(); });
 addEventListener('resize', layout);
+GP = realGrowth();
 layout();
 decodeSong();
 requestAnimationFrame(frame);
